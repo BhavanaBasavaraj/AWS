@@ -14,6 +14,9 @@ def lambda_handler(event, context):
         for instance in reservation['Instances']:
             active_instance_ids.add(instance['InstanceId'])
 
+    # List to store deleted snapshots
+    deleted_snapshots = []
+
     # Iterate through each snapshot and delete if it's not attached to any volume or the volume is not attached to a running instance
     for snapshot in response['Snapshots']:
         snapshot_id = snapshot['SnapshotId']
@@ -22,6 +25,7 @@ def lambda_handler(event, context):
         if not volume_id:
             # Delete the snapshot if it's not attached to any volume
             ec2.delete_snapshot(SnapshotId=snapshot_id)
+            deleted_snapshots.append(snapshot_id)
             print(f"Deleted EBS snapshot {snapshot_id} as it was not attached to any volume.")
         else:
             # Check if the volume still exists
@@ -29,9 +33,20 @@ def lambda_handler(event, context):
                 volume_response = ec2.describe_volumes(VolumeIds=[volume_id])
                 if not volume_response['Volumes'][0]['Attachments']:
                     ec2.delete_snapshot(SnapshotId=snapshot_id)
+                    deleted_snapshots.append(snapshot_id)
                     print(f"Deleted EBS snapshot {snapshot_id} as it was taken from a volume not attached to any running instance.")
             except ec2.exceptions.ClientError as e:
                 if e.response['Error']['Code'] == 'InvalidVolume.NotFound':
                     # The volume associated with the snapshot is not found (it might have been deleted)
                     ec2.delete_snapshot(SnapshotId=snapshot_id)
+                    deleted_snapshots.append(snapshot_id)
                     print(f"Deleted EBS snapshot {snapshot_id} as its associated volume was not found.")
+
+    # Return a summary of deleted snapshots
+    return {
+        'statusCode': 200,
+        'body': {
+            'deleted_snapshots': deleted_snapshots,
+            'total_deleted': len(deleted_snapshots)
+        }
+    }
